@@ -1,0 +1,24 @@
+# .claude-seo-env — copy into the folder you run the audit from, never commit it.
+#
+# Optional crawl settings. Everything before the first Domain= applies to all
+# shops below. Max-Pages=0 means no cap; that is also the default whenever this
+# file exists at all.
+Max-Pages   = 0
+Concurrency = 6
+Delay       = 0.2
+
+# One block per shop. A new Domain= line starts the next block.
+# Values come from the Shopify admin: Online Store > Preferences > Crawler access.
+# The signature is bound to exactly this host and expires after ~90 days.
+Domain          = kundenshop.de
+Signature-Input = sig1=("@authority" "signature-agent");keyid="KEYID-AUS-DEM-ADMIN";nonce="NONCE-AUS-DEM-ADMIN";tag="web-bot-auth";created=1700000000;expires=1707776000
+Signature       = sig1=:SIGNATURWERT-AUS-DEM-ADMIN==:
+# Signature-Agent is optional — "https://shopify.com" is the default and never changes.
+Signature-Agent = "https://shopify.com"
+
+# Per-shop overrides are allowed inside a block.
+Domain          = zweiter-shop.de
+Signature-Input = sig1=("@authority" "signature-agent");keyid="…";tag="web-bot-auth";created=…;expires=…
+Signature       = sig1=:…:
+Concurrency     = 3
+Exclude         = /collections/.*\?
