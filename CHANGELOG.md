@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The OAuth token file was not actually restricted on Windows: `os.chmod` only
+  toggles the read-only attribute there and `os.fchmod` does not exist, so the
+  file kept the ACL inherited from its directory while the docstring promised
+  `0o600`. The ACL is now rewritten to the current user with `icacls` on every
+  save and load, and a failure to do so is reported instead of swallowed. (#290)
+
 ## [2.2.5] - 2026-08-25
 
 ### Added

@@ -17,8 +17,10 @@ Usage:
 
 import argparse
 import json
+import ntpath
 import os
 import re
+import subprocess
 import sys
 import time
 from typing import Optional
@@ -197,6 +199,64 @@ def _chmod_quiet(path: str, mode: int) -> None:
         pass
 
 
+_IS_WINDOWS = os.name == "nt"
+
+
+def _icacls_path() -> str:
+    # Absolute path on purpose: a credential-hardening step must not pick up
+    # whatever icacls.exe happens to be first on PATH. ntpath keeps the
+    # Windows separators even when this is exercised by tests on POSIX.
+    system_root = os.environ.get("SystemRoot") or r"C:\Windows"
+    return ntpath.join(system_root, "System32", "icacls.exe")
+
+
+def _restrict_to_current_user(path: str) -> bool:
+    """Windows equivalent of ``chmod 0o600``.
+
+    ``os.chmod`` only toggles the read-only attribute on Windows and
+    ``os.fchmod`` does not exist there, so the mode-bit sequence in
+    :func:`_save_oauth_token` leaves the NTFS ACL untouched: the file keeps
+    whatever it inherited from the directory (typically SYSTEM,
+    Administrators and the user). ``icacls /inheritance:r /grant:r`` drops
+    the inherited entries and grants only the current account.
+
+    Returns ``True`` when the ACL was rewritten, ``False`` when it could not
+    be (no account name in the environment, icacls missing, unknown account,
+    non-NTFS volume). Never raises. icacls resolves the account before
+    touching the file, so a failed call leaves the existing ACL in place.
+    """
+    user = os.environ.get("USERNAME")
+    if not user:
+        return False
+    domain = os.environ.get("USERDOMAIN")
+    account = f"{domain}\\{user}" if domain else user
+    try:
+        result = subprocess.run(
+            [_icacls_path(), path, "/inheritance:r", "/grant:r", f"{account}:F"],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def harden_credential_file(path: str) -> bool:
+    """Restrict ``path`` to the current user on every supported platform.
+
+    POSIX: ``chmod 0o600``. Windows: rewrite the NTFS ACL via
+    :func:`_restrict_to_current_user`. Returns whether the OS honoured it.
+    """
+    if _IS_WINDOWS:
+        return _restrict_to_current_user(path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        return False
+    return True
+
+
 def _load_oauth_token() -> Optional[dict]:
     """Load saved OAuth token from TOKEN_PATH.
 
@@ -206,7 +266,7 @@ def _load_oauth_token() -> Optional[dict]:
     """
     if not os.path.exists(TOKEN_PATH):
         return None
-    _chmod_quiet(TOKEN_PATH, 0o600)
+    harden_credential_file(TOKEN_PATH)
     try:
         with open(TOKEN_PATH, "r") as f:
             return json.load(f)
@@ -227,6 +287,11 @@ def _save_oauth_token(token_data: dict):
            creator could install a 0o644 file between the two calls.
 
     The token file is never world-readable, even briefly.
+
+    On Windows steps 1-3 do not change who can read the file (mode bits
+    only map to the read-only attribute there), so the NTFS ACL is
+    rewritten to the current user afterwards; a failure to do so is
+    reported on stderr instead of passing silently.
     """
     os.makedirs(os.path.dirname(TOKEN_PATH), exist_ok=True)
     if os.path.exists(TOKEN_PATH):
@@ -245,6 +310,12 @@ def _save_oauth_token(token_data: dict):
         pass  # FS may not support fchmod (e.g. some Windows filesystems)
     with os.fdopen(fd, "w") as f:
         json.dump(token_data, f, indent=2)
+    if not harden_credential_file(TOKEN_PATH):
+        print(
+            f"Warning: could not restrict {TOKEN_PATH} to the current user; "
+            "the token file keeps the permissions inherited from its directory.",
+            file=sys.stderr,
+        )
 
 
 def _persist_oauth_client_path(creds_path: str):
