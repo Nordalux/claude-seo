@@ -230,6 +230,18 @@ def check_agent_refs(files, texts):
     return errors
 
 
+def _normalise_newlines(data):
+    """Hash lock inputs as LF text so a CRLF checkout matches the baseline.
+
+    The lock is written from LF content (sync_flow.py hashes the fetched text
+    directly). Git for Windows defaults to core.autocrlf=true, which checks the
+    same files out with CRLF, so a byte-for-byte hash flagged every locked file
+    as tampered on a stock Windows clone. Only CRLF is folded; any other change
+    still fails the check.
+    """
+    return data.replace(b"\r\n", b"\n")
+
+
 def check_flow_lock(files):
     errors = []
     locked = {}
@@ -246,7 +258,7 @@ def check_flow_lock(files):
             errors.append(f"flow lock: missing {rel}")
             continue
         with open(full, "rb") as fh:
-            got = hashlib.sha256(fh.read()).hexdigest()
+            got = hashlib.sha256(_normalise_newlines(fh.read())).hexdigest()
         if got != want:
             errors.append(f"flow lock: hash mismatch {rel}")
     extra = {f for f in files
