@@ -133,6 +133,13 @@ def test_validate_url_blocks_authority_confusion(url: str) -> None:
         ("172.16.0.1", False),
         ("127.0.0.1", False),
         ("169.254.169.254", False),  # AWS/GCP/Azure metadata
+        ("100.100.100.200", False),  # Alibaba Cloud metadata (RFC 6598 shared space)
+        ("100.64.0.0", False),  # RFC 6598 lower bound
+        ("100.127.255.255", False),  # RFC 6598 upper bound
+        ("100.128.0.1", True),  # first address past the /10 is public
+        ("::ffff:100.100.100.200", False),  # IPv4-mapped form of the above
+        ("::ffff:127.0.0.1", False),
+        ("::ffff:8.8.8.8", True),
         ("0.0.0.0", False),
         ("::1", False),
         ("fe80::1", False),  # IPv6 link-local
@@ -204,6 +211,8 @@ def test_validate_url_strict_accepts_ip_literal_public() -> None:
         "https://10.0.0.1/",
         "https://192.168.1.1/",
         "https://169.254.169.254/",
+        "http://100.100.100.200/latest/meta-data/",
+        "http://[::ffff:100.100.100.200]/latest/meta-data/",
         "https://0.0.0.0/",
     ],
 )

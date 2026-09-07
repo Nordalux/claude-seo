@@ -180,20 +180,30 @@ def _reject_authority_confusion(url: str, parsed) -> None:
         raise URLSafetyError("URL fragment/userinfo confusion refused")
 
 
+# RFC 6598 shared address space (carrier-grade NAT). Not in ``is_private``
+# on any supported Python, yet never publicly routable: Alibaba Cloud serves
+# its instance metadata at 100.100.100.200, and Tailscale/WireGuard meshes
+# hand out 100.64/10 addresses for internal services.
+_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+
+
 def is_safe_ip(ip_str: str) -> bool:
     """Return True iff ``ip_str`` is a public unicast address.
 
-    Handles IPv4-mapped IPv6 (``::ffff:127.0.0.1`` correctly returns False
-    because Python 3.9+'s ``ipaddress`` propagates ``is_loopback`` /
-    ``is_private`` through IPv4-mapped form). IPv6 unique-local
-    (``fc00::/7``) and link-local (``fe80::/10``) are also rejected.
+    IPv4-mapped IPv6 (``::ffff:127.0.0.1``) is unwrapped and judged as the
+    embedded IPv4 address, so every IPv4 rule below applies to it too.
+    IPv6 unique-local (``fc00::/7``) and link-local (``fe80::/10``) are
+    also rejected.
     """
     try:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
         return False
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
     return not (
         ip.is_private
+        or (ip.version == 4 and ip in _SHARED_ADDRESS_SPACE)
         or ip.is_loopback
         or ip.is_reserved
         or ip.is_link_local

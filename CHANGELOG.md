@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `url_safety.is_safe_ip` accepted the RFC 6598 shared address space
+  (100.64.0.0/10), which Python's `ipaddress` does not count as private. Alibaba
+  Cloud serves instance metadata at 100.100.100.200, so a crafted URL or DNS
+  answer in that range slipped past the SSRF guard. The range is now refused,
+  and IPv4-mapped IPv6 literals are judged as their embedded IPv4 address.
+
 ## [2.2.5] - 2026-08-25
 
 ### Added
