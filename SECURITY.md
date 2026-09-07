@@ -51,13 +51,13 @@ claude-seo is a research and audit toolkit that runs on a user's workstation. It
 
 3. **Local privilege escalation against stored credentials.** The OAuth token at `~/.config/claude-seo/oauth-token.json` is the most sensitive on-disk artifact.
 
-   **Mitigation:** v2 forces `0o600` on every write (`os.open` + `os.fchmod`) and remediates legacy `0o644` files in place on first load. Tokens never contain the OAuth `client_secret` — only the access/refresh pair plus expiry metadata.
+   **Mitigation:** v2 forces `0o600` on every write (`os.open` + `os.fchmod`) and remediates legacy `0o644` files in place on first load. On Windows, where mode bits only map to the read-only attribute, the file's NTFS ACL is rewritten to the current user (`icacls /inheritance:r /grant:r`) on every save and load. Tokens never contain the OAuth `client_secret` — only the access/refresh pair plus expiry metadata.
 
 ## Known residual risks
 
 - **Playwright + Chromium DNS rebinding.** Chromium does its own DNS resolution inside the renderer process. claude-seo's Python-layer DNS pin (`url_safety._pin_dns`) cannot reach it. The Playwright `route()` handler re-validates every subresource host (`make_safe_playwright_route_handler`), which closes the common case, but a true rebinding attacker can still race Chromium's resolver after our pre-flight returns. Mitigation: do not point `/seo` skills at untrusted sites with high-frequency redirects.
 - **IPv6-only audit targets.** The strict validator queries `family=AF_INET` for the initial resolution. Hosts with AAAA records only will surface as "DNS resolution failed". This is **fail-closed** by design — we'd rather refuse than connect to an unvalidated IPv6 endpoint. Tracked for a future patch (full dual-stack pinning, similar to the Playwright handler which already uses `AF_UNSPEC`).
-- **Windows file permissions.** `os.fchmod(fd, 0o600)` is a no-op on Windows for non-ACL filesystems. Users on Windows should rely on per-user directory ACLs instead of POSIX mode bits.
+- **Windows file permissions.** Mode bits do not exist on Windows; the token file's ACL is restricted to the current user with `icacls` instead. Administrators can still take ownership of the file (as root can read any file on POSIX), and a non-NTFS volume cannot hold an ACL at all, in which case the save prints a warning and the file keeps its directory's inherited permissions.
 
 ## Security-relevant code paths
 
@@ -69,8 +69,8 @@ If you are auditing, these are the high-leverage files:
 | `scripts/render_page.py` | Shared headless renderer (Playwright + trafilatura). |
 | `scripts/fetch_page.py` | Raw-HTTP fetcher built on `url_safety.safe_requests_session`. |
 | `scripts/capture_screenshot.py` | Playwright screenshot capture with safe route handler. |
-| `scripts/google_auth.py` | OAuth token lifecycle, `chmod 0o600` writes. |
-| `scripts/backlinks_auth.py` | Backlink-API credential loading; SSRF guard via `url_safety`. |
+| `scripts/google_auth.py` | OAuth token lifecycle, `chmod 0o600` writes, `icacls` ACL on Windows. |
+| `scripts/backlinks_auth.py` | Backlink-API credential loading, key file restricted to the user on load; SSRF guard via `url_safety`. |
 | `tests/test_url_safety.py` | 91-case regression battery covering every bypass class. |
 
 ## What this policy does **not** cover

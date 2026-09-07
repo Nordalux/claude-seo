@@ -11,6 +11,7 @@ is asked about, not only the originally-pinned host.
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import sys
@@ -596,3 +597,126 @@ def test_load_oauth_token_remediates_legacy_0o644(tmp_path, monkeypatch) -> None
     data = google_auth._load_oauth_token()
     assert data == {"access_token": "x"}
     assert target.stat().st_mode & 0o777 == 0o600
+
+
+# ---------------------------------------------------------------------------
+# Windows ACL hardening of the token file (issue #290)
+# ---------------------------------------------------------------------------
+
+
+def _windows_env(monkeypatch, user="alice", domain="CORP"):
+    import google_auth  # noqa: WPS433
+
+    monkeypatch.setattr(google_auth, "_IS_WINDOWS", True)
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+    if user is None:
+        monkeypatch.delenv("USERNAME", raising=False)
+    else:
+        monkeypatch.setenv("USERNAME", user)
+    if domain is None:
+        monkeypatch.delenv("USERDOMAIN", raising=False)
+    else:
+        monkeypatch.setenv("USERDOMAIN", domain)
+    return google_auth
+
+
+def _record_icacls(monkeypatch, google_auth, returncode=0, raise_exc=None):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        if raise_exc is not None:
+            raise raise_exc
+        return SimpleNamespace(returncode=returncode, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(google_auth.subprocess, "run", fake_run)
+    return calls
+
+
+def test_harden_credential_file_rewrites_the_acl_on_windows(tmp_path, monkeypatch) -> None:
+    google_auth = _windows_env(monkeypatch)
+    calls = _record_icacls(monkeypatch, google_auth)
+    target = str(tmp_path / "oauth-token.json")
+
+    assert google_auth.harden_credential_file(target) is True
+    (argv, kwargs), = calls
+    assert argv == [
+        r"C:\Windows\System32\icacls.exe",
+        target,
+        "/inheritance:r",
+        "/grant:r",
+        r"CORP\alice:F",
+    ]
+    assert kwargs["capture_output"] is True
+    assert kwargs["check"] is False
+
+
+def test_harden_credential_file_uses_bare_username_without_a_domain(tmp_path, monkeypatch) -> None:
+    google_auth = _windows_env(monkeypatch, domain=None)
+    calls = _record_icacls(monkeypatch, google_auth)
+    assert google_auth.harden_credential_file(str(tmp_path / "t.json")) is True
+    assert calls[0][0][-1] == "alice:F"
+
+
+def test_harden_credential_file_reports_windows_failures(tmp_path, monkeypatch) -> None:
+    google_auth = _windows_env(monkeypatch)
+    target = str(tmp_path / "t.json")
+
+    _record_icacls(monkeypatch, google_auth, returncode=1)
+    assert google_auth.harden_credential_file(target) is False
+
+    _record_icacls(monkeypatch, google_auth, raise_exc=FileNotFoundError("icacls"))
+    assert google_auth.harden_credential_file(target) is False
+
+    calls = _record_icacls(monkeypatch, google_auth)
+    monkeypatch.delenv("USERNAME", raising=False)
+    assert google_auth.harden_credential_file(target) is False
+    assert calls == []  # nothing to grant to: icacls is not even attempted
+
+
+def test_save_oauth_token_warns_when_the_acl_cannot_be_restricted(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    google_auth = _windows_env(monkeypatch)
+    _record_icacls(monkeypatch, google_auth, returncode=1)
+    target = tmp_path / "config" / "oauth-token.json"
+    monkeypatch.setattr(google_auth, "TOKEN_PATH", str(target))
+
+    google_auth._save_oauth_token({"access_token": "x"})
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"access_token": "x"}
+    assert "could not restrict" in capsys.readouterr().err
+
+
+def test_save_and_load_oauth_token_are_silent_when_the_acl_is_restricted(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    google_auth = _windows_env(monkeypatch)
+    calls = _record_icacls(monkeypatch, google_auth)
+    target = tmp_path / "config" / "oauth-token.json"
+    monkeypatch.setattr(google_auth, "TOKEN_PATH", str(target))
+
+    google_auth._save_oauth_token({"access_token": "x"})
+    assert google_auth._load_oauth_token() == {"access_token": "x"}
+
+    assert [argv[1] for argv, _ in calls] == [str(target), str(target)]  # save, then load
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="exercises the real icacls on NTFS")
+def test_save_oauth_token_leaves_only_the_current_user_in_the_acl(tmp_path, monkeypatch) -> None:
+    import subprocess
+
+    import google_auth  # noqa: WPS433
+
+    target = tmp_path / "config" / "oauth-token.json"
+    monkeypatch.setattr(google_auth, "TOKEN_PATH", str(target))
+    google_auth._save_oauth_token({"access_token": "x"})
+
+    listing = subprocess.run(
+        [google_auth._icacls_path(), str(target)], capture_output=True, text=True, check=True
+    ).stdout
+    aces = [line for line in listing.splitlines() if ":(" in line]
+    assert len(aces) == 1, listing
+    assert os.environ["USERNAME"].lower() in aces[0].lower()
+    assert "(I)" not in aces[0]  # nothing inherited any more
