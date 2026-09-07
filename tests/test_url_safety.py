@@ -502,6 +502,9 @@ def test_route_handler_continues_when_both_ipv4_and_ipv6_public() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    os.name != "posix", reason="asserts POSIX mode bits, which Windows does not represent"
+)
 def test_save_oauth_token_writes_0o600(tmp_path, monkeypatch) -> None:
     """_save_oauth_token must produce a 0o600 file regardless of whether
     the path existed beforehand or what the umask is."""
@@ -519,6 +522,9 @@ def test_save_oauth_token_writes_0o600(tmp_path, monkeypatch) -> None:
         os.umask(old_umask)
 
 
+@pytest.mark.skipif(
+    os.name != "posix", reason="asserts POSIX mode bits, which Windows does not represent"
+)
 def test_save_oauth_token_remediates_legacy_0o644(tmp_path, monkeypatch) -> None:
     """A pre-existing 0o644 token (v1.9.x default) is locked down on save."""
     import google_auth  # noqa: WPS433
@@ -582,6 +588,9 @@ def test_save_oauth_token_ignores_fchmod_oserror(tmp_path, monkeypatch) -> None:
     }
 
 
+@pytest.mark.skipif(
+    os.name != "posix", reason="asserts POSIX mode bits, which Windows does not represent"
+)
 def test_load_oauth_token_remediates_legacy_0o644(tmp_path, monkeypatch) -> None:
     """_load_oauth_token chmods the file before reading, so the next read
     by any other process sees 0o600 even without a re-save."""

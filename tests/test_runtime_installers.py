@@ -1,6 +1,9 @@
 """Static installer/runtime contract checks that do not mutate a real home."""
 
+import os
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,10 +32,15 @@ def test_windows_installer_delegates_to_runtime_without_path_mutation() -> None:
     assert "-Directory -Filter 'seo*'" not in text
 
 
-def test_launcher_is_executable_and_uses_safe_exec() -> None:
-    launcher = ROOT / "bin/claude-seo"
-    assert launcher.stat().st_mode & 0o100
-    text = launcher.read_text(encoding="utf-8")
+@pytest.mark.skipif(
+    os.name != "posix", reason="the executable bit is a POSIX mode bit; Windows has none"
+)
+def test_launcher_is_executable() -> None:
+    assert (ROOT / "bin/claude-seo").stat().st_mode & 0o100
+
+
+def test_launcher_uses_safe_exec() -> None:
+    text = (ROOT / "bin/claude-seo").read_text(encoding="utf-8")
     assert 'exec py -3 "${runtime}" "$@"' in text
     assert 'exec python3 "${runtime}" "$@"' in text
     assert 'exec python "${runtime}" "$@"' in text
