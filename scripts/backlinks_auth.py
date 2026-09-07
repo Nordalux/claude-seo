@@ -37,6 +37,8 @@ except ImportError as _import_exc:
         "Install with: pip install -r requirements.txt"
     ) from _import_exc
 
+from google_auth import harden_credential_file  # noqa: E402
+
 CONFIG_PATH = os.path.expanduser("~/.config/claude-seo/backlinks-api.json")
 CACHE_DIR = os.path.expanduser("~/.cache/claude-seo/commoncrawl")
 
@@ -77,6 +79,11 @@ def load_config() -> dict:
 
     # Load from config file
     if os.path.exists(CONFIG_PATH):
+        # The file holds API keys and is written by hand, so it usually
+        # carries the umask default (0o644) or, on Windows, the ACL inherited
+        # from the directory. Restrict it to the current user on every load,
+        # the same remediation google_auth applies to the OAuth token.
+        harden_credential_file(CONFIG_PATH)
         try:
             with open(CONFIG_PATH, "r") as f:
                 file_config = json.load(f)

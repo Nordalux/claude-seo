@@ -70,7 +70,7 @@ If you are auditing, these are the high-leverage files:
 | `scripts/fetch_page.py` | Raw-HTTP fetcher built on `url_safety.safe_requests_session`. |
 | `scripts/capture_screenshot.py` | Playwright screenshot capture with safe route handler. |
 | `scripts/google_auth.py` | OAuth token lifecycle, `chmod 0o600` writes, `icacls` ACL on Windows. |
-| `scripts/backlinks_auth.py` | Backlink-API credential loading; SSRF guard via `url_safety`. |
+| `scripts/backlinks_auth.py` | Backlink-API credential loading, key file restricted to the user on load; SSRF guard via `url_safety`. |
 | `tests/test_url_safety.py` | 91-case regression battery covering every bypass class. |
 
 ## What this policy does **not** cover
