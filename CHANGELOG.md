@@ -7,16 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- CI now runs the full test suite on Windows and macOS, not just the three
-  platform-neutral modules. The tests that assert POSIX mode bits skip on
-  Windows instead of failing.
-
 ### Fixed
 
-- The schema-hook policy tests decoded the hook's UTF-8 output with the locale
-  codec, which is cp1252 on Windows and cannot represent the emoji markers.
+- `consistency_check.py` reported every FLOW-locked prompt file as a hash
+  mismatch on a stock Windows clone: Git for Windows checks the files out with
+  CRLF (`core.autocrlf=true`) while the lock hashes LF content. The check now
+  folds CRLF before hashing, so the lock only fails on real content changes.
 
 ## [2.2.5] - 2026-08-25
 
