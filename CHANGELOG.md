@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `preload_check.py` exited 1 on every successful run that scored below a
+  hard-coded 75, so `set -e` scripts and CI steps aborted on healthy pages. A
+  completed analysis now exits 0; the gate is opt-in through `--fail-under N`.
+  Exit 2 for a URL refused by url_safety is unchanged. (#281)
+
 ## [2.2.5] - 2026-08-25
 
 ### Added

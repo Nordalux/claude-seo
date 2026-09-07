@@ -46,6 +46,12 @@ Result JSON::
       "score": 0..100,
       "recommendations": ["…"]
     }
+
+Exit status::
+
+    0  analysis completed (a low score is a finding, not a failed run)
+    1  score below ``--fail-under N`` (opt-in gate, off by default)
+    2  URL refused by url_safety
 """
 
 from __future__ import annotations
@@ -195,6 +201,14 @@ def main() -> int:
     )
     parser.add_argument("url")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--fail-under",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Exit 1 if the score is below N. Off by default: a successful "
+             "run exits 0 whatever the score.",
+    )
     args = parser.parse_args()
 
     try:
@@ -228,7 +242,9 @@ def main() -> int:
             for r in result["recommendations"]:
                 print(f"  - {r}")
 
-    return 0 if result["score"] >= 75 else 1
+    if args.fail_under is not None and result["score"] < args.fail_under:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
