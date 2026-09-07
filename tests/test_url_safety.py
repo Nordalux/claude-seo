@@ -581,7 +581,9 @@ def test_save_oauth_token_ignores_fchmod_oserror(tmp_path, monkeypatch) -> None:
     def unsupported_fchmod(_fd, _mode):
         raise OSError("unsupported")
 
-    monkeypatch.setattr(google_auth.os, "fchmod", unsupported_fchmod)
+    # os.fchmod only exists on Windows from Python 3.13; install the stub
+    # either way so the OSError path is exercised on every platform.
+    monkeypatch.setattr(google_auth.os, "fchmod", unsupported_fchmod, raising=False)
     google_auth._save_oauth_token({"access_token": "portable"})
     assert json.loads(target.read_text(encoding="utf-8")) == {
         "access_token": "portable"
