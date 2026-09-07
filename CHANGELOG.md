@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- CI now runs the full test suite on Windows and macOS, not just the three
+  platform-neutral modules. The tests that assert POSIX mode bits skip on
+  Windows instead of failing.
+
+### Fixed
+
+- The schema-hook policy tests decoded the hook's UTF-8 output with the locale
+  codec, which is cp1252 on Windows and cannot represent the emoji markers.
+
 ## [2.2.5] - 2026-08-25
 
 ### Added
