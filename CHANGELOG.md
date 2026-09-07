@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Every live fetch failed behind an HTTP proxy on loopback
+  (`HTTPS_PROXY=http://127.0.0.1:<port>`, the usual sandbox and CI setup): the
+  pinned resolver refused to resolve the proxy's own address as non-public. The
+  proxy host `requests` selects for the URL is now exempt from that check, and
+  only that host. (#280)
+
 ## [2.2.5] - 2026-08-25
 
 ### Added

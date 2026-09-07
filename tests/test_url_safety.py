@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import requests
 
 _SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
 if _SCRIPTS not in sys.path:
@@ -312,8 +313,9 @@ def test_safe_requests_head_uses_strict_validation_and_dns_pin() -> None:
     response = SimpleNamespace(status_code=200)
 
     @contextmanager
-    def fake_pin(hostname: str, pinned_ip: str, port: int):
+    def fake_pin(hostname: str, pinned_ip: str, port: int, exempt_hosts=frozenset()):
         captured["pin"] = (hostname, pinned_ip, port)
+        captured["exempt"] = exempt_hosts
         yield
 
     with patch.object(
@@ -596,3 +598,103 @@ def test_load_oauth_token_remediates_legacy_0o644(tmp_path, monkeypatch) -> None
     data = google_auth._load_oauth_token()
     assert data == {"access_token": "x"}
     assert target.stat().st_mode & 0o777 == 0o600
+
+
+# ---------------------------------------------------------------------------
+# Configured HTTP proxy (issue #280): the proxy host must resolve
+# ---------------------------------------------------------------------------
+
+
+def _addrinfo(ip: str, port: int) -> list:
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
+
+
+def _system_proxies(monkeypatch, mapping: dict) -> None:
+    """Pin what ``requests`` sees as the environment's proxies. Going through
+    the real ``getproxies`` would pick up the developer's own HTTPS_PROXY, or
+    the Windows registry proxy, and make these tests machine-dependent."""
+    monkeypatch.setattr(url_safety.requests.utils, "getproxies", lambda: dict(mapping))
+
+
+def test_proxy_hosts_reads_environment_and_honours_no_proxy(monkeypatch) -> None:
+    _system_proxies(monkeypatch, {"https": "http://127.0.0.1:3128"})
+    monkeypatch.setenv("NO_PROXY", "direct.example")
+    assert url_safety._proxy_hosts("https://example.com/") == frozenset({"127.0.0.1"})
+    assert url_safety._proxy_hosts("https://direct.example/") == frozenset()
+    assert url_safety._proxy_hosts("http://example.com/") == frozenset()
+
+
+def test_proxy_hosts_prefers_explicit_proxies_mapping(monkeypatch) -> None:
+    _system_proxies(monkeypatch, {"https": "http://127.0.0.1:3128"})
+    explicit = {"https": "proxy.corp.example:8080"}
+    assert url_safety._proxy_hosts("https://example.com/", explicit) == frozenset(
+        {"proxy.corp.example"}
+    )
+
+
+def test_proxy_hosts_is_empty_without_a_proxy(monkeypatch) -> None:
+    _system_proxies(monkeypatch, {})
+    assert url_safety._proxy_hosts("https://example.com/") == frozenset()
+
+
+def test_pin_dns_lets_the_exempt_proxy_host_resolve_to_loopback() -> None:
+    original_getaddrinfo = socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        if host == "127.0.0.1":
+            return _addrinfo("127.0.0.1", port or 3128)
+        return original_getaddrinfo(host, port, *args, **kwargs)
+
+    with patch.object(url_safety.socket, "getaddrinfo", side_effect=fake_getaddrinfo):
+        # Without the exemption the loopback proxy is refused (the #280 symptom).
+        with url_safety._pin_dns("pinned.example", "8.8.8.8", 443):
+            with pytest.raises(socket.gaierror, match="non-public IP"):
+                socket.getaddrinfo("127.0.0.1", 3128)
+        with url_safety._pin_dns(
+            "pinned.example", "8.8.8.8", 443, exempt_hosts=frozenset({"127.0.0.1"})
+        ):
+            assert socket.getaddrinfo("127.0.0.1", 3128)[0][4][0] == "127.0.0.1"
+
+
+def test_pin_dns_exemption_does_not_leak_to_other_hosts() -> None:
+    """Only the proxy host is exempt; a redirect target on loopback still fails."""
+    original_getaddrinfo = socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        if host == "redirected.example":
+            return _addrinfo("127.0.0.1", port or 80)
+        return original_getaddrinfo(host, port, *args, **kwargs)
+
+    with patch.object(url_safety.socket, "getaddrinfo", side_effect=fake_getaddrinfo):
+        with url_safety._pin_dns(
+            "pinned.example", "8.8.8.8", 443, exempt_hosts=frozenset({"127.0.0.1"})
+        ):
+            with pytest.raises(socket.gaierror, match="non-public IP"):
+                socket.getaddrinfo("redirected.example", 80)
+
+
+def test_safe_requests_get_reaches_a_loopback_proxy(monkeypatch) -> None:
+    """End to end, offline: with HTTPS_PROXY on loopback the request must get
+    as far as the proxy socket. A closed port turns that into a plain
+    connection refusal, whereas before the fix url_safety refused to resolve
+    the proxy at all."""
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    closed_port = probe.getsockname()[1]
+    probe.close()
+    _system_proxies(monkeypatch, {"https": f"http://127.0.0.1:{closed_port}"})
+    monkeypatch.delenv("NO_PROXY", raising=False)
+
+    original_getaddrinfo = socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        if host == "example.com":
+            return _addrinfo("93.184.216.34", port or 443)
+        if host == "127.0.0.1":
+            return _addrinfo("127.0.0.1", port or closed_port)
+        return original_getaddrinfo(host, port, *args, **kwargs)
+
+    with patch.object(url_safety.socket, "getaddrinfo", side_effect=fake_getaddrinfo):
+        with pytest.raises(requests.exceptions.ProxyError) as excinfo:
+            url_safety.safe_requests_get("https://example.com/", timeout=5)
+    assert "url_safety: refused to resolve" not in str(excinfo.value)
