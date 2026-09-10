@@ -223,3 +223,60 @@ def test_run_propagates_child_signal(tmp_path: Path, monkeypatch: pytest.MonkeyP
     )
     assert rc == 128 + signal.SIGTERM
     assert delivered == [(os.getpid(), signal.SIGTERM)]
+
+
+def test_failed_stage_reports_child_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
+    stderr = "\n".join(
+        [
+            "Looking in links: /tmp/tmp8b58vt29",
+            "ERROR: Could not install packages due to an OSError: [WinError 206] "
+            "Der Dateiname oder die Erweiterung ist zu lang",
+            "",
+        ]
+    )
+    monkeypatch.setattr(
+        runtime.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 1, "", stderr),
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        runtime._run_checked(["python", "-m", "venv", "x"], env={}, stage="virtual environment creation")
+    message = str(excinfo.value)
+    assert message.startswith("virtual environment creation failed with exit code 1")
+    assert "[WinError 206]" in message
+
+
+def test_failed_stage_falls_back_to_stdout_and_bounds_the_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+    stdout = "\n".join(f"line {index}" for index in range(40))
+    monkeypatch.setattr(
+        runtime.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 2, stdout, ""),
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        runtime._run_checked(["pip"], env={}, stage="dependency installation")
+    message = str(excinfo.value)
+    assert "line 39" in message
+    assert "line 10" in message
+    assert "line 9" not in message
+
+
+def test_successful_stage_returns_the_completed_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        runtime.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "ok", "warning noise"),
+    )
+    assert runtime._run_checked(["pip"], env={}, stage="dependency installation").stdout == "ok"
+
+
+def test_redaction_covers_repr_quoted_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runtime.Path, "home", classmethod(lambda cls: Path(r"C:\Users\someone")))
+    quoted = repr(r"C:\Users\someone\.claude\skills\seo\.venv.next-1\Scripts\python.exe")
+    nested = repr(f"sys.path = [{quoted}]")
+    redacted = runtime._redact(
+        f"Command '[{quoted}, '-c', {nested}]' returned non-zero exit status 1.\n"
+        "Looking in links: c:\\users\\someone\\AppData\\Local\\Temp\\tmp1"
+    )
+    assert "someone" not in redacted
+    assert redacted.count("<home>") == 3
